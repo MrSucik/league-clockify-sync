@@ -49,24 +49,46 @@ export function createRiotService(apiKey: string) {
   };
 
   /**
-   * Get match details by match ID
+   * Get match details by match ID with retry logic
    */
-  const getMatchData = async (matchId: string): Promise<MatchData> => {
-    const response = await fetch(
-      `${state.env.RIOT_API_BASE}/lol/match/v5/matches/${matchId}`,
-      { headers: getHeaders() }
-    );
+  const getMatchData = async (matchId: string, retries: number = 3): Promise<MatchData> => {
+    for (let attempt = 0; attempt < retries; attempt++) {
+      try {
+        const response = await fetch(
+          `${state.env.RIOT_API_BASE}/lol/match/v5/matches/${matchId}`,
+          { headers: getHeaders() }
+        );
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw {
-        status: response.status,
-        statusText: response.statusText,
-        data: errorData,
-      };
+        if (response.status === 429) {
+          // Rate limited - wait longer before retrying
+          const waitTime = Math.pow(2, attempt) * 2000; // Exponential backoff: 2s, 4s, 8s
+          console.log(`⏳ Rate limited, waiting ${waitTime/1000}s before retry ${attempt + 1}/${retries}...`);
+          await sleep(waitTime);
+          continue;
+        }
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw {
+            status: response.status,
+            statusText: response.statusText,
+            data: errorData,
+          };
+        }
+
+        return response.json() as Promise<MatchData>;
+      } catch (error: any) {
+        if (error.status === 429 && attempt < retries - 1) {
+          const waitTime = Math.pow(2, attempt) * 2000;
+          console.log(`⏳ Rate limited, waiting ${waitTime/1000}s before retry ${attempt + 1}/${retries}...`);
+          await sleep(waitTime);
+          continue;
+        }
+        throw error;
+      }
     }
 
-    return response.json() as Promise<MatchData>;
+    throw new Error(`Failed to fetch match ${matchId} after ${retries} attempts`);
   };
 
   /**
@@ -80,7 +102,7 @@ export function createRiotService(apiKey: string) {
     console.log(`✅ Found ${matchIds.length} matches`);
 
     // Add rate limiting delay
-    await sleep(100);
+    await sleep(1000);
 
     // Fetch match details
     const matches: MatchData[] = [];
@@ -93,7 +115,8 @@ export function createRiotService(apiKey: string) {
         matches.push(matchData);
 
         // Rate limiting - Riot API allows 20 requests per second for development keys
-        await sleep(100);
+        // Using 1 second delay to be safe with rate limits
+        await sleep(1000);
       } catch (error) {
         console.error(`Failed to fetch match ${matchId}:`, error);
       }
@@ -144,7 +167,7 @@ export function createRiotService(apiKey: string) {
             return allMatches;
           }
 
-          await sleep(100);
+          await sleep(1000);
         } catch (error) {
           console.error(`Failed to fetch match ${matchId}:`, error);
         }
@@ -156,7 +179,7 @@ export function createRiotService(apiKey: string) {
       }
 
       start += count;
-      await sleep(100);
+      await sleep(1000);
     }
 
     return allMatches;
