@@ -37,12 +37,14 @@ export interface QueueInfo {
 }
 
 export const QUEUE_TYPES: Record<number, QueueInfo> = {
+  0: { queueId: 0, map: 'Custom', description: 'Custom Game' },
   400: { queueId: 400, map: "Summoner's Rift", description: 'Normal Draft Pick' },
   420: { queueId: 420, map: "Summoner's Rift", description: 'Ranked Solo/Duo' },
   430: { queueId: 430, map: "Summoner's Rift", description: 'Normal Blind Pick' },
   440: { queueId: 440, map: "Summoner's Rift", description: 'Ranked Flex' },
   450: { queueId: 450, map: "Howling Abyss", description: 'ARAM' },
-  700: { queueId: 700, map: "Summoner\'s Rift", description: 'Clash' },
+  480: { queueId: 480, map: "Howling Abyss", description: 'ARAM: Mayhem' },
+  700: { queueId: 700, map: "Summoner's Rift", description: 'Clash' },
   830: { queueId: 830, map: "Summoner's Rift", description: 'Co-op vs. AI Intro' },
   840: { queueId: 840, map: "Summoner's Rift", description: 'Co-op vs. AI Beginner' },
   850: { queueId: 850, map: "Summoner's Rift", description: 'Co-op vs. AI Intermediate' },

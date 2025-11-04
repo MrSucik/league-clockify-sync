@@ -44,6 +44,25 @@ async function syncLeagueToClockify(
       return;
     }
 
+    // Show queue type breakdown
+    const queueBreakdown: Record<number, { count: number; name: string }> = {};
+    for (const match of matches) {
+      const queueId = match.info.queueId;
+      const queueInfo = QUEUE_TYPES[queueId];
+      const queueName = queueInfo ? queueInfo.description : `Unknown Queue ${queueId}`;
+
+      if (!queueBreakdown[queueId]) {
+        queueBreakdown[queueId] = { count: 0, name: queueName };
+      }
+      queueBreakdown[queueId].count++;
+    }
+
+    console.log('📊 Queue type breakdown:');
+    for (const [queueId, info] of Object.entries(queueBreakdown)) {
+      console.log(`   - ${info.name}: ${info.count} matches`);
+    }
+    console.log('');
+
     // Get existing Clockify entries
     const existingEntries = await clockifyService.getTimeEntriesForDateRange(
       startDate.toISOString().split('T')[0],
