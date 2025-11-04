@@ -36,5 +36,5 @@ RUN pnpm install --frozen-lockfile --prod
 # Copy built files from builder
 COPY --from=builder /app/dist ./dist
 
-# Run the compiled JavaScript
-CMD ["node", "dist/scripts/index.js"]
+# Run the cron scheduler
+CMD ["node", "dist/cron.js"]
