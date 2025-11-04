@@ -18,8 +18,8 @@ const envSchema = z.object({
   SYNC_DAYS: z
     .string()
     .transform((val) => parseInt(val, 10))
-    .refine((val) => !Number.isNaN(val) && val >= 1 && val <= 365, {
-      message: 'SYNC_DAYS must be a number between 1 and 365',
+    .refine((val) => !Number.isNaN(val) && val >= 1 && val <= 3650, {
+      message: 'SYNC_DAYS must be a number between 1 and 3650',
     }),
 
   // API Configuration

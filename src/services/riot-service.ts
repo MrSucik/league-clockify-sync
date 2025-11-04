@@ -1,16 +1,19 @@
 import { getEnvironment } from '../config/env';
 import type { MatchData, MatchId } from '../types/riot';
 import { sleep } from '../utils/common';
+import { createRateLimiter } from '../utils/rate-limiter';
 
 interface RiotState {
   apiKey: string;
   env: ReturnType<typeof getEnvironment>;
+  rateLimiter: ReturnType<typeof createRateLimiter>;
 }
 
 export function createRiotService(apiKey: string) {
   const state: RiotState = {
     apiKey,
     env: getEnvironment(),
+    rateLimiter: createRateLimiter(),
   };
 
   const getHeaders = () => ({
@@ -26,6 +29,8 @@ export function createRiotService(apiKey: string) {
     start: number = 0,
     count: number = 20
   ): Promise<string[]> => {
+    await state.rateLimiter.waitForSlot();
+
     const params = new URLSearchParams({
       start: start.toString(),
       count: count.toString(),
@@ -54,6 +59,8 @@ export function createRiotService(apiKey: string) {
   const getMatchData = async (matchId: string, retries: number = 3): Promise<MatchData> => {
     for (let attempt = 0; attempt < retries; attempt++) {
       try {
+        await state.rateLimiter.waitForSlot();
+
         const response = await fetch(
           `${state.env.RIOT_API_BASE}/lol/match/v5/matches/${matchId}`,
           { headers: getHeaders() }
@@ -101,9 +108,6 @@ export function createRiotService(apiKey: string) {
     const matchIds = await getMatchIds(puuid, 0, count);
     console.log(`✅ Found ${matchIds.length} matches`);
 
-    // Add rate limiting delay
-    await sleep(1000);
-
     // Fetch match details
     const matches: MatchData[] = [];
 
@@ -113,10 +117,6 @@ export function createRiotService(apiKey: string) {
       try {
         const matchData = await getMatchData(matchId);
         matches.push(matchData);
-
-        // Rate limiting - Riot API allows 20 requests per second for development keys
-        // Using 1 second delay to be safe with rate limits
-        await sleep(1000);
       } catch (error) {
         console.error(`Failed to fetch match ${matchId}:`, error);
       }
@@ -141,6 +141,9 @@ export function createRiotService(apiKey: string) {
     );
 
     const allMatches: MatchData[] = [];
+    const queueIdCounts: Record<number, number> = {};
+    let filteredOldCount = 0;
+    let filteredNewCount = 0;
     let start = 0;
     const count = 100; // Fetch in batches of 100
 
@@ -151,10 +154,17 @@ export function createRiotService(apiKey: string) {
         break;
       }
 
+      console.log(`📦 Fetched batch of ${matchIds.length} match IDs (offset: ${start})...`);
+
       // Fetch match details
+      let shouldStop = false;
       for (const matchId of matchIds) {
         try {
           const matchData = await getMatchData(matchId);
+          const matchDate = new Date(matchData.info.gameEndTimestamp);
+
+          // Track queue types
+          queueIdCounts[matchData.info.queueId] = (queueIdCounts[matchData.info.queueId] || 0) + 1;
 
           // Check if match is within date range
           if (
@@ -162,15 +172,27 @@ export function createRiotService(apiKey: string) {
             matchData.info.gameEndTimestamp <= endTimestamp
           ) {
             allMatches.push(matchData);
+            console.log(`   ✓ Match ${matchId} - Queue ${matchData.info.queueId} - ${matchDate.toISOString()}`);
           } else if (matchData.info.gameEndTimestamp < startTimestamp) {
-            // We've gone past the date range, stop fetching
-            return allMatches;
+            // Match is older than our date range
+            filteredOldCount++;
+            console.log(`   ⏭ Skipping old match ${matchId} - ${matchDate.toISOString()} (before ${startDate.toISOString()})`);
+            shouldStop = true;
+          } else {
+            // Match is newer than our date range
+            filteredNewCount++;
+            console.log(`   ⏭ Skipping new match ${matchId} - ${matchDate.toISOString()} (after ${endDate.toISOString()})`);
           }
 
-          await sleep(1000);
         } catch (error) {
           console.error(`Failed to fetch match ${matchId}:`, error);
         }
+      }
+
+      // If we found matches older than our range, stop pagination
+      if (shouldStop) {
+        console.log(`🛑 Reached matches older than date range, stopping pagination...`);
+        break;
       }
 
       // If we got fewer matches than requested, we've reached the end
@@ -179,8 +201,17 @@ export function createRiotService(apiKey: string) {
       }
 
       start += count;
-      await sleep(1000);
     }
+
+    console.log(`\n📊 Match fetching summary:`);
+    console.log(`   - Matches in date range: ${allMatches.length}`);
+    console.log(`   - Filtered (too old): ${filteredOldCount}`);
+    console.log(`   - Filtered (too new): ${filteredNewCount}`);
+    console.log(`   - Queue types found:`);
+    for (const [queueId, count] of Object.entries(queueIdCounts)) {
+      console.log(`     • Queue ${queueId}: ${count} matches`);
+    }
+    console.log('');
 
     return allMatches;
   };
