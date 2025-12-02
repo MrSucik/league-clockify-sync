@@ -127,19 +127,12 @@ export function createOpggService(config: OpggServiceConfig) {
     const matches = response.data.game_history;
     console.log(`✅ Found ${matches.length} matches from OP.GG\n`);
 
-    return matches.map((match) => convertToMatchData(match, config));
+    return matches.map((match) => convertToMatchData(match));
   };
 
-  const convertToMatchData = (match: OpggMatch, config: OpggServiceConfig): MatchData => {
+  const convertToMatchData = (match: OpggMatch): MatchData => {
     const gameEndTimestamp = new Date(match.created_at).getTime();
     const queueId = GAME_TYPE_TO_QUEUE_ID[match.game_type] || 0;
-
-    // Find the player's participant data
-    const playerParticipant = match.participants.find(
-      (p) =>
-        p.summoner.game_name.toLowerCase() === config.gameName.toLowerCase() &&
-        p.summoner.tagline.toLowerCase() === config.tagLine.toLowerCase()
-    );
 
     const participants: Participant[] = match.participants.map((p) => ({
       puuid: p.summoner.puuid,
