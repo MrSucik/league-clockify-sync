@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "tsx src/scripts/index.ts",
+    "sync:lcu": "tsx src/scripts/sync-lcu.ts",
     "dev": "tsx watch src/scripts/index.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
@@ -29,6 +30,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.23.0",
     "@types/node": "^22.10.7",
     "@types/node-cron": "^3.0.11",
     "cli-progress": "^3.12.0",
