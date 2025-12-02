@@ -1,27 +1,21 @@
 import * as cliProgress from 'cli-progress';
 import { validateEnvironment } from '../config/env';
 import { createClockifyService } from '../services/clockify-service';
-import { createRiotService } from '../services/riot-service';
+import { createOpggService } from '../services/opgg-service';
 import { QUEUE_TYPES } from '../types/riot';
 import { formatDuration, formatKDA, getErrorMessage, isApiError, sleep } from '../utils/common';
 
-// Validate environment on startup
 const env = validateEnvironment();
 
-/**
- * Sync League of Legends matches to Clockify
- */
 async function syncLeagueToClockify(
-  riotService: ReturnType<typeof createRiotService>,
+  opggService: ReturnType<typeof createOpggService>,
   clockifyService: ReturnType<typeof createClockifyService>
 ): Promise<void> {
   try {
     console.log('🎮 Starting League of Legends to Clockify sync...\n');
 
-    // Initialize Clockify client
     await clockifyService.initialize();
 
-    // Calculate date range
     const endDate = new Date();
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - env.SYNC_DAYS);
@@ -30,14 +24,9 @@ async function syncLeagueToClockify(
       `📅 Fetching matches from last ${env.SYNC_DAYS} days (${startDate.toISOString().split('T')[0]} to ${endDate.toISOString().split('T')[0]})...\n`
     );
 
-    // Get matches from Riot API
-    const matches = await riotService.getMatchesInDateRange(
-      env.SUMMONER_PUUID,
-      startDate,
-      endDate
-    );
+    const matches = await opggService.getMatchesInDateRange(startDate, endDate);
 
-    console.log(`✅ Found ${matches.length} matches in League history\n`);
+    console.log(`✅ Found ${matches.length} matches in date range\n`);
 
     if (matches.length === 0) {
       console.log('No matches found. Exiting...');
@@ -58,7 +47,7 @@ async function syncLeagueToClockify(
     }
 
     console.log('📊 Queue type breakdown:');
-    for (const [queueId, info] of Object.entries(queueBreakdown)) {
+    for (const [, info] of Object.entries(queueBreakdown)) {
       console.log(`   - ${info.name}: ${info.count} matches`);
     }
     console.log('');
@@ -76,14 +65,12 @@ async function syncLeagueToClockify(
     console.log(`📊 Found ${existingEntries.length} existing time entries in Clockify`);
     console.log(`   - ${existingLeagueEntries.length} are League entries\n`);
 
-    // Sync each match
     let syncedCount = 0;
     let skippedCount = 0;
     let failedCount = 0;
 
     console.log('📊 Processing matches...\n');
 
-    // Create progress bar
     const progressBar = new cliProgress.SingleBar({
       format: '⏳ Progress |{bar}| {percentage}% | {value}/{total} Matches',
       barCompleteChar: '\u2588',
@@ -92,6 +79,8 @@ async function syncLeagueToClockify(
     });
 
     progressBar.start(matches.length, 0);
+
+    const playerIdentifier = opggService.getPlayerPuuid();
 
     for (let i = 0; i < matches.length; i++) {
       const match = matches[i];
@@ -106,7 +95,7 @@ async function syncLeagueToClockify(
 
       // Find player's data
       const playerData = match.info.participants.find(
-        (p) => p.puuid === env.SUMMONER_PUUID
+        (p) => p.summonerName.toLowerCase() === playerIdentifier
       );
 
       if (!playerData) {
@@ -123,7 +112,7 @@ async function syncLeagueToClockify(
       const resultEmoji = playerData.win ? '✅' : '❌';
       const kda = formatKDA(playerData.kills, playerData.deaths, playerData.assists);
 
-      // Calculate game end time
+      // Calculate game times
       const gameEndTime = new Date(match.info.gameEndTimestamp);
       const gameStartTime = new Date(gameEndTime.getTime() - match.info.gameDuration * 1000);
 
@@ -140,21 +129,17 @@ async function syncLeagueToClockify(
         });
 
         syncedCount++;
-
-        // Add delay to avoid rate limiting
         await sleep(env.CLOCKIFY_API_DELAY);
       } catch (error: unknown) {
         const errorMessage = getErrorMessage(error);
         failedCount++;
 
-        // If we hit rate limit, wait longer
         if (errorMessage.includes('429') || errorMessage.includes('Too Many Requests')) {
           await sleep(200);
         }
       }
     }
 
-    // Stop progress bar
     progressBar.stop();
 
     console.log(`\n🎉 Sync complete!`);
@@ -179,20 +164,23 @@ async function syncLeagueToClockify(
   }
 }
 
-/**
- * Main execution
- */
 async function main() {
-  console.log('🎮 League of Legends → Clockify Sync\n');
-  console.log(
-    'This tool will sync your League of Legends match history to Clockify as time entries.\n'
-  );
+  console.log('🎮 League of Legends → Clockify Sync (via OP.GG)\n');
+  console.log('This tool syncs your League match history to Clockify as time entries.\n');
 
-  const riotService = createRiotService(env.RIOT_API_KEY);
+  const opggService = createOpggService({
+    gameName: env.OPGG_GAME_NAME,
+    tagLine: env.OPGG_TAG_LINE,
+    region: env.OPGG_REGION,
+  });
+
   const clockifyService = createClockifyService(env.CLOCKIFY_API_TOKEN);
 
-  await syncLeagueToClockify(riotService, clockifyService);
+  try {
+    await syncLeagueToClockify(opggService, clockifyService);
+  } finally {
+    await opggService.disconnect();
+  }
 }
 
-// Run the main function
 main().catch(console.error);

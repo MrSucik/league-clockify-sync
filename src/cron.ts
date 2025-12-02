@@ -1,28 +1,22 @@
 import cron from 'node-cron';
+import * as cliProgress from 'cli-progress';
 import { validateEnvironment } from './config/env';
 import { createClockifyService } from './services/clockify-service';
-import { createRiotService } from './services/riot-service';
+import { createOpggService } from './services/opgg-service';
 import { QUEUE_TYPES } from './types/riot';
 import { formatDuration, formatKDA, getErrorMessage, isApiError, sleep } from './utils/common';
-import * as cliProgress from 'cli-progress';
 
-// Validate environment on startup
 const env = validateEnvironment();
 
-/**
- * Sync League of Legends matches to Clockify
- */
 async function syncLeagueToClockify(
-  riotService: ReturnType<typeof createRiotService>,
+  opggService: ReturnType<typeof createOpggService>,
   clockifyService: ReturnType<typeof createClockifyService>
 ): Promise<void> {
   try {
     console.log('🎮 Starting League of Legends to Clockify sync...\n');
 
-    // Initialize Clockify client
     await clockifyService.initialize();
 
-    // Calculate date range
     const endDate = new Date();
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - env.SYNC_DAYS);
@@ -31,21 +25,15 @@ async function syncLeagueToClockify(
       `📅 Fetching matches from last ${env.SYNC_DAYS} days (${startDate.toISOString().split('T')[0]} to ${endDate.toISOString().split('T')[0]})...\n`
     );
 
-    // Get matches from Riot API
-    const matches = await riotService.getMatchesInDateRange(
-      env.SUMMONER_PUUID,
-      startDate,
-      endDate
-    );
+    const matches = await opggService.getMatchesInDateRange(startDate, endDate);
 
-    console.log(`✅ Found ${matches.length} matches in League history\n`);
+    console.log(`✅ Found ${matches.length} matches in date range\n`);
 
     if (matches.length === 0) {
       console.log('No matches found. Exiting...');
       return;
     }
 
-    // Show queue type breakdown
     const queueBreakdown: Record<number, { count: number; name: string }> = {};
     for (const match of matches) {
       const queueId = match.info.queueId;
@@ -59,12 +47,11 @@ async function syncLeagueToClockify(
     }
 
     console.log('📊 Queue type breakdown:');
-    for (const [queueId, info] of Object.entries(queueBreakdown)) {
+    for (const [, info] of Object.entries(queueBreakdown)) {
       console.log(`   - ${info.name}: ${info.count} matches`);
     }
     console.log('');
 
-    // Get existing Clockify entries
     const existingEntries = await clockifyService.getTimeEntriesForDateRange(
       startDate.toISOString().split('T')[0],
       endDate.toISOString().split('T')[0]
@@ -77,14 +64,12 @@ async function syncLeagueToClockify(
     console.log(`📊 Found ${existingEntries.length} existing time entries in Clockify`);
     console.log(`   - ${existingLeagueEntries.length} are League entries\n`);
 
-    // Sync each match
     let syncedCount = 0;
     let skippedCount = 0;
     let failedCount = 0;
 
     console.log('📊 Processing matches...\n');
 
-    // Create progress bar
     const progressBar = new cliProgress.SingleBar({
       format: '⏳ Progress |{bar}| {percentage}% | {value}/{total} Matches',
       barCompleteChar: '\u2588',
@@ -94,20 +79,20 @@ async function syncLeagueToClockify(
 
     progressBar.start(matches.length, 0);
 
+    const playerIdentifier = opggService.getPlayerPuuid();
+
     for (let i = 0; i < matches.length; i++) {
       const match = matches[i];
 
       progressBar.update(i + 1);
 
-      // Check if already synced
       if (await clockifyService.isMatchSynced(match.metadata.matchId, existingEntries)) {
         skippedCount++;
         continue;
       }
 
-      // Find player's data
       const playerData = match.info.participants.find(
-        (p) => p.puuid === env.SUMMONER_PUUID
+        (p) => p.summonerName.toLowerCase() === playerIdentifier
       );
 
       if (!playerData) {
@@ -115,16 +100,13 @@ async function syncLeagueToClockify(
         continue;
       }
 
-      // Get queue type information
       const queueInfo = QUEUE_TYPES[match.info.queueId];
       const queueName = queueInfo ? queueInfo.description : `Queue ${match.info.queueId}`;
 
-      // Format match data
       const result = playerData.win ? 'Win' : 'Loss';
       const resultEmoji = playerData.win ? '✅' : '❌';
       const kda = formatKDA(playerData.kills, playerData.deaths, playerData.assists);
 
-      // Calculate game end time
       const gameEndTime = new Date(match.info.gameEndTimestamp);
       const gameStartTime = new Date(gameEndTime.getTime() - match.info.gameDuration * 1000);
 
@@ -141,21 +123,17 @@ async function syncLeagueToClockify(
         });
 
         syncedCount++;
-
-        // Add delay to avoid rate limiting
         await sleep(env.CLOCKIFY_API_DELAY);
       } catch (error: unknown) {
         const errorMessage = getErrorMessage(error);
         failedCount++;
 
-        // If we hit rate limit, wait longer
         if (errorMessage.includes('429') || errorMessage.includes('Too Many Requests')) {
           await sleep(200);
         }
       }
     }
 
-    // Stop progress bar
     progressBar.stop();
 
     console.log(`\n🎉 Sync complete!`);
@@ -180,21 +158,25 @@ async function syncLeagueToClockify(
   }
 }
 
-/**
- * Run sync job
- */
 async function runSyncJob() {
   console.log('\n' + '='.repeat(80));
   console.log(`🕐 Cron job triggered at ${new Date().toISOString()}`);
   console.log('='.repeat(80) + '\n');
 
-  const riotService = createRiotService(env.RIOT_API_KEY);
+  const opggService = createOpggService({
+    gameName: env.OPGG_GAME_NAME,
+    tagLine: env.OPGG_TAG_LINE,
+    region: env.OPGG_REGION,
+  });
+
   const clockifyService = createClockifyService(env.CLOCKIFY_API_TOKEN);
 
   try {
-    await syncLeagueToClockify(riotService, clockifyService);
+    await syncLeagueToClockify(opggService, clockifyService);
   } catch (error) {
     console.error('Sync job failed:', error);
+  } finally {
+    await opggService.disconnect();
   }
 
   console.log('\n' + '='.repeat(80));
@@ -202,23 +184,20 @@ async function runSyncJob() {
   console.log('='.repeat(80) + '\n');
 }
 
-// Schedule the cron job to run every hour
-console.log('🚀 League-Clockify Sync Scheduler Started');
+console.log('🚀 League-Clockify Sync Scheduler Started (via OP.GG)');
 console.log(`📅 Schedule: Every hour (0 * * * *)`);
 console.log(`🌍 Environment: ${env.NODE_ENV}`);
 console.log(`📊 Sync Days: ${env.SYNC_DAYS}`);
+console.log(`👤 Summoner: ${env.OPGG_GAME_NAME}#${env.OPGG_TAG_LINE} (${env.OPGG_REGION.toUpperCase()})`);
 console.log('');
 
-// Run immediately on startup
 console.log('Running initial sync...');
 runSyncJob();
 
-// Schedule to run every hour
 cron.schedule('0 * * * *', () => {
   runSyncJob();
 });
 
-// Keep the process alive
 process.on('SIGTERM', () => {
   console.log('Received SIGTERM, shutting down gracefully...');
   process.exit(0);
