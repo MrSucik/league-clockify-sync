@@ -21,7 +21,7 @@ Automatically sync your League of Legends game history to Clockify as time entri
 
 1. Install dependencies:
 ```bash
-pnpm install
+npm install
 ```
 
 2. Copy `env.example` to `.env` and fill in your credentials:
@@ -31,7 +31,7 @@ cp env.example .env
 
 3. Run the sync:
 ```bash
-pnpm start
+npm start
 ```
 
 ## Configuration
